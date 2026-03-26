@@ -1,0 +1,19 @@
+# Credentials / local config
+config.json
+
+# MicroPython build artifacts
+__pycache__/
+*.pyc
+*.mpy
+
+# Logs
+*.log
+*.log.old
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
