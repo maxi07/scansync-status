@@ -4,19 +4,19 @@ A MicroPython status dashboard for [Raspberry Pi Pico W](https://www.raspberrypi
 
 ```
 ┌──────────────────────────────────┐
-│ ScanSync              ▂▄▆█      │  ← Header with WiFi signal
-│ ✓10  ⚙3  ✗2  =15       Ø46s    │  ← Stats overview
-│ [████████████▒▒▒░░]             │  ← Progress bar
-│─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
-│ ⚙ report_q1.pdf         [OCR]  │  ← File list with status
-│ ⚙ invoice_2026.pdf      [META] │
-│ ✓ scan_003.pdf           [OK]   │
-│ ✗ broken.pdf             [ERR]  │
-│ ✓ letter_feb.pdf         [OK]   │
-│─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
-│ 🕐 Fertig: 26.03. 14:02 (3min) │  ← Last completed
-│─────────────────────────────────│
-│ Upd 14:05              📶 🖥    │  ← Footer with status icons
+│ ScanSync              ▂▄▆█       │  ← Header with WiFi signal
+│ ✓10  ⚙3  ✗2  =15       Ø46s      │  ← Stats overview
+│ [████████████▒▒▒░░]              │  ← Progress bar
+│─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
+│ ⚙ report_q1.pdf           [OCR]  │  ← File list with status
+│ ⚙ invoice_2026.pdf        [META] │
+│ ✓ scan_003.pdf            [OK]   │
+│ ✗ broken.pdf              [ERR]  │
+│ ✓ letter_feb.pdf          [OK]   │
+│─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
+│ 🕐 Fertig: 26.03. 14:02 (3min)   │  ← Last completed
+│──────────────────────────────────│
+│ Upd 14:05              📶 🖥     │  ← Footer with status icons
 └──────────────────────────────────┘
 ```
 
