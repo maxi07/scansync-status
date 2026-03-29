@@ -4,9 +4,81 @@ import network
 import urequests
 import gc
 import machine
-import epd2in9
+from machine import Pin, SPI
+import esp2in9bv2
 from logger import Logger
 
+
+# ============================================================
+# Wrapper MIT Rotation (Landscape Fix)
+# ============================================================
+
+class EPDWrapper:
+    def __init__(self):
+        spi = SPI(1, baudrate=4000000, polarity=0, phase=0)
+
+        self.display = esp2in9bv2.Display(
+            spi,
+            cs=Pin(9),
+            dc=Pin(8),
+            rst=Pin(12),
+            busy=Pin(13)
+        )
+
+    def _rot(self, x, y):
+        return y, (self.display.height - 1 - x)
+
+    def fill(self, c):
+        self.display.blackFB.fill(1 if c else 0)
+
+    def pixel(self, x, y, c):
+        rx, ry = self._rot(x, y)
+        self.display.blackFB.pixel(rx, ry, 1 if c else 0)
+
+    def text(self, txt, x, y, c):
+        rx, ry = self._rot(x, y)
+        self.display.blackFB.text(txt, rx, ry, 1 if c else 0)
+
+    def line(self, x1, y1, x2, y2, c):
+        x1, y1 = self._rot(x1, y1)
+        x2, y2 = self._rot(x2, y2)
+        self.display.blackFB.line(x1, y1, x2, y2, 1 if c else 0)
+
+    def hline(self, x, y, w, c):
+        for i in range(w):
+            self.pixel(x + i, y, c)
+
+    def vline(self, x, y, h, c):
+        for i in range(h):
+            self.pixel(x, y + i, c)
+
+    def rect(self, x, y, w, h, c):
+        self.hline(x, y, w, c)
+        self.hline(x, y + h - 1, w, c)
+        self.vline(x, y, h, c)
+        self.vline(x + w - 1, y, h, c)
+
+    def fill_rect(self, x, y, w, h, c):
+        for yy in range(h):
+            self.hline(x, y + yy, w, c)
+
+    def init(self):
+        pass
+
+    def Clear(self, color):
+        self.fill(color)
+        self.display.present()
+
+    def display_Base(self, _):
+        self.display.present()
+
+    def display_Partial(self, _):
+        self.display.present()
+
+
+# ============================================================
+# ORIGINAL CODE (UNVERÄNDERT)
+# ============================================================
 
 def load_config():
     with open("config.json", "r") as f:
@@ -19,7 +91,6 @@ log = Logger(
     max_bytes=CFG.get("log_max_bytes", 32768)
 )
 
-# ScanSync ProcessStatus mapping
 STATUS_MAP = {
     0: "Nicht bereit",
     1: "Metadaten",
@@ -525,31 +596,29 @@ def get_rssi(wlan):
 
 
 # ============================================================
-# Hauptprogramm
+# Hauptprogramm (angepasst)
 # ============================================================
 
 def main():
     log.info("=== ScanSync Status Display ===")
     gc.collect()
 
-    # 1. Display initialisieren
     try:
-        epd = epd2in9.EPD_2in9_Landscape()
+        epd = EPDWrapper()
         epd.Clear(0xFF)
         log.info("Display OK")
     except Exception as e:
         log.error("Display-Init: " + str(e))
         machine.reset()
 
-    # Boot Step 1: Init OK
+    # Boot Step 1
     draw_boot(epd, "Display bereit", step=1)
-    epd.display_Base(epd.buffer)
+    epd.display_Base(None)
 
-    # Boot Step 2: WiFi
+    # Boot Step 2
     draw_boot(epd, "WiFi verbinden...", step=1,
               sub=CFG.get("wifi_ssid", ""))
-    epd.init()
-    epd.display_Base(epd.buffer)
+    epd.display_Base(None)
 
     wlan = None
     wifi_ok = False
@@ -565,34 +634,34 @@ def main():
     else:
         draw_boot(epd, "WiFi FEHLER!", step=1,
                   sub="Kein Netzwerk")
-    epd.init()
-    epd.display_Base(epd.buffer)
+    epd.display_Base(None)
 
-    # Boot Step 3: Zeitsync
+    # Zeit
     if wifi_ok:
         draw_boot(epd, "Zeit synchronisieren...", step=2)
-        epd.init()
-        epd.display_Base(epd.buffer)
+        epd.display_Base(None)
+
         time_ok = False
         try:
             time_ok = sync_time()
         except Exception as e:
             log.warning("Zeitsync: " + str(e))
+
         if time_ok:
             draw_boot(epd, "Zeit OK!", step=3)
         else:
             draw_boot(epd, "Zeit FEHLER", step=2,
                       sub="Weiter ohne Sync")
-        epd.init()
-        epd.display_Base(epd.buffer)
 
-    # Boot Step 4: Datenabruf
+        epd.display_Base(None)
+
+    # Daten
     draw_boot(epd, "Lade Status...", step=3)
-    epd.init()
-    epd.display_Base(epd.buffer)
+    epd.display_Base(None)
 
     data = None
     server_ok = False
+
     if wifi_ok:
         try:
             data = fetch_status()
@@ -600,13 +669,11 @@ def main():
         except Exception as e:
             log.error("Erster Abruf: " + str(e))
 
-    # Dashboard: Full Refresh als Basis fuer Partial Updates
     render_display(epd, data, wifi_ok, server_ok, get_rssi(wlan))
-    epd.init()
-    epd.display_Base(epd.buffer)
+    epd.display_Base(None)
+
     log.info("Dashboard aktiv")
 
-    # Hauptschleife
     prev_data = data
     full_cnt = 0
     tsync_cnt = 0
@@ -616,63 +683,44 @@ def main():
         try:
             gc.collect()
 
-            # WiFi pruefen
             if wlan and not wlan.isconnected():
                 log.warning("WiFi getrennt, reconnect...")
                 wifi_ok = False
-                try:
-                    wlan = connect_wifi()
-                    wifi_ok = wlan.isconnected()
-                except Exception as e:
-                    log.error("Reconnect: " + str(e))
+                wlan = connect_wifi()
+                wifi_ok = wlan.isconnected()
             elif wlan:
                 wifi_ok = wlan.isconnected()
 
-            # Zeitsync alle 120 Zyklen (~60 Min)
             tsync_cnt += 1
             if wifi_ok and tsync_cnt >= 120:
                 tsync_cnt = 0
-                try:
-                    sync_time()
-                except Exception:
-                    pass
+                sync_time()
 
-            # Status abrufen
             data = None
             server_ok = False
-            if wifi_ok:
-                try:
-                    data = fetch_status()
-                    server_ok = data is not None
-                except Exception as e:
-                    log.error("Abfrage: " + str(e))
 
-            # Update nur wenn noetig
+            if wifi_ok:
+                data = fetch_status()
+                server_ok = data is not None
+
             needs = data != prev_data
             if not server_ok and prev_data is not None:
                 needs = True
 
-            # Full refresh alle 20 Zyklen (~10 Min)
             full_cnt += 1
             force_full = full_cnt >= 20
 
             if needs or force_full:
-                log.debug("Display-Update full={}".format(
-                    force_full))
-                try:
-                    render_display(
-                        epd, data, wifi_ok, server_ok,
-                        get_rssi(wlan))
-                    if force_full:
-                        full_cnt = 0
-                        epd.init()
-                        epd.display_Base(epd.buffer)
-                        log.info("Full refresh")
-                    else:
-                        epd.display_Base(epd.buffer)
-                        epd.display_Partial(epd.buffer)
-                except Exception as e:
-                    log.error("Render: " + str(e))
+                render_display(
+                    epd, data, wifi_ok, server_ok,
+                    get_rssi(wlan))
+
+                if force_full:
+                    full_cnt = 0
+                    epd.display_Base(None)
+                else:
+                    epd.display_Partial(None)
+
                 prev_data = data
 
         except Exception as e:
@@ -681,7 +729,7 @@ def main():
                 epd.fill(0xff)
                 epd.text("FEHLER!", 100, 50, 0)
                 epd.text(str(e)[:34], 8, 68, 0)
-                epd.display_Partial(epd.buffer)
+                epd.display_Partial(None)
             except Exception:
                 pass
 
