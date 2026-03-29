@@ -5,6 +5,7 @@ import urequests
 import gc
 import machine
 from machine import Pin, SPI
+from framebuf import FrameBuffer, MONO_HLSB
 import esp2in9bv2
 from logger import Logger
 
@@ -15,7 +16,7 @@ from logger import Logger
 
 class EPDWrapper:
     def __init__(self):
-        spi = SPI(1, baudrate=4000000, polarity=0, phase=0)
+        spi = SPI(1, baudrate=3450000, polarity=0, phase=0)
 
         self.display = esp2in9bv2.Display(
             spi,
@@ -25,55 +26,66 @@ class EPDWrapper:
             busy=Pin(13)
         )
 
-    def _rot(self, x, y):
-        return y, (self.display.height - 1 - x)
+        self.width = 296
+        self.height = 128
+        self.byte_width = -(-self.width // 8)
+        self.buffer_length = self.byte_width * self.height
+        self.image = bytearray(self.buffer_length)
+        self.fb = FrameBuffer(self.image, self.width, self.height, MONO_HLSB)
+        self.fb.fill(1)
+
+    def _rotate_to_physical(self):
+        self.display.blackFB.fill(1)
+        for y in range(self.height):
+            for x in range(self.width):
+                self.display.blackFB.pixel(
+                    self.display.width - 1 - y,
+                    x,
+                    self.fb.pixel(x, y)
+                )
+
+    def present(self):
+        self._rotate_to_physical()
+        self.display.present()
 
     def fill(self, c):
-        self.display.blackFB.fill(1 if c else 0)
+        self.fb.fill(1 if c else 0)
 
     def pixel(self, x, y, c):
-        rx, ry = self._rot(x, y)
-        self.display.blackFB.pixel(rx, ry, 1 if c else 0)
+        self.fb.pixel(x, y, 1 if c else 0)
 
     def text(self, txt, x, y, c):
-        rx, ry = self._rot(x, y)
-        self.display.blackFB.text(txt, rx, ry, 1 if c else 0)
+        self.fb.text(txt, x, y, 1 if c else 0)
 
     def line(self, x1, y1, x2, y2, c):
-        x1, y1 = self._rot(x1, y1)
-        x2, y2 = self._rot(x2, y2)
-        self.display.blackFB.line(x1, y1, x2, y2, 1 if c else 0)
+        self.fb.line(x1, y1, x2, y2, 1 if c else 0)
 
     def hline(self, x, y, w, c):
-        for i in range(w):
-            self.pixel(x + i, y, c)
+        self.fb.hline(x, y, w, 1 if c else 0)
 
     def vline(self, x, y, h, c):
-        for i in range(h):
-            self.pixel(x, y + i, c)
+        self.fb.vline(x, y, h, 1 if c else 0)
 
     def rect(self, x, y, w, h, c):
-        self.hline(x, y, w, c)
-        self.hline(x, y + h - 1, w, c)
-        self.vline(x, y, h, c)
-        self.vline(x + w - 1, y, h, c)
+        self.fb.rect(x, y, w, h, 1 if c else 0)
 
     def fill_rect(self, x, y, w, h, c):
-        for yy in range(h):
-            self.hline(x, y + yy, w, c)
+        self.fb.fill_rect(x, y, w, h, 1 if c else 0)
 
     def init(self):
         pass
 
     def Clear(self, color):
         self.fill(color)
-        self.display.present()
+        self.present()
 
     def display_Base(self, _):
-        self.display.present()
+        self.present()
 
     def display_Partial(self, _):
-        self.display.present()
+        # Waveshare V3 partial refresh on Pico is often lower quality,
+        # so use the same full refresh path to keep text sharp.
+        self.present()
 
 
 # ============================================================
@@ -715,11 +727,9 @@ def main():
                     epd, data, wifi_ok, server_ok,
                     get_rssi(wlan))
 
-                if force_full:
-                    full_cnt = 0
-                    epd.display_Base(None)
-                else:
-                    epd.display_Partial(None)
+                # Use full refresh for every update to maximize text sharpness.
+                full_cnt = 0
+                epd.display_Base(None)
 
                 prev_data = data
 
