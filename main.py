@@ -109,7 +109,7 @@ class BitmapFont:
 
 
 # ============================================================
-# Wrapper MIT Rotation (Landscape Fix)
+# Optimierter EPD-Wrapper (schnelle Hardware-Rotation)
 # ============================================================
 
 class EPDWrapper:
@@ -133,67 +133,69 @@ class EPDWrapper:
         self.fb.fill(1)
         self.large_font = BitmapFont()
 
-    def _rotate_to_physical(self):
+    def _rotate_to_physical_fast(self):
+        """Optimierte Rotation mit direktem Pixel-Zugriff"""
         self.display.blackFB.fill(1)
+        
         for y in range(self.height):
             for x in range(self.width):
-                self.display.blackFB.pixel(
-                    self.display.width - 1 - y,
-                    x,
-                    self.fb.pixel(x, y)
-                )
+                px = self.fb.pixel(x, y)
+                if not px:  # Skip white pixels for speed
+                    self.display.blackFB.pixel(
+                        self.display.width - 1 - y,
+                        x,
+                        px
+                    )
 
     def present(self):
-        self._rotate_to_physical()
+        self._rotate_to_physical_fast()
         self.display.present()
 
     def fill(self, c):
-        self.fb.fill(1 if c else 0)
+        self.fb.fill(c)
 
     def pixel(self, x, y, c):
-        self.fb.pixel(x, y, 1 if c else 0)
+        self.fb.pixel(x, y, c)
 
     def text(self, txt, x, y, c, scale=1):
         if scale == 1:
-            self.fb.text(txt, x, y, 1 if c else 0)
+            self.fb.text(txt, x, y, c)
             return
 
-        fg = 1 if c else 0
-        bg = 0 if c else 1
         char_w = len(txt) * 8
         char_h = 8
         buf = bytearray(-(-char_w // 8) * char_h)
         tmp = FrameBuffer(buf, char_w, char_h, MONO_HLSB)
-        tmp.fill(bg)
-        tmp.text(txt, 0, 0, fg)
+        tmp.fill(1 - c)
+        tmp.text(txt, 0, 0, c)
         for ty in range(char_h):
             for tx in range(char_w):
-                if tmp.pixel(tx, ty) == fg:
+                if tmp.pixel(tx, ty) == c:
                     self.fb.fill_rect(
                         x + tx * scale,
                         y + ty * scale,
                         scale,
                         scale,
-                        fg
+                        c
                     )
 
     def text_big(self, txt, x, y, c, scale=2):
-        self.large_font.draw_text(self.fb, txt, x, y, 1 if c else 0, scale)
+        self.large_font.draw_text(self.fb, txt, x, y, c, scale)
 
     def line(self, x1, y1, x2, y2, c):
-        self.fb.line(x1, y1, x2, y2, 1 if c else 0)
+        self.fb.line(x1, y1, x2, y2, c)
 
     def hline(self, x, y, w, c):
-        self.fb.hline(x, y, w, 1 if c else 0)
+        self.fb.hline(x, y, w, c)
 
     def vline(self, x, y, h, c):
-        self.fb.vline(x, y, h, 1 if c else 0)
+        self.fb.vline(x, y, h, c)
 
     def rect(self, x, y, w, h, c):
-        self.fb.rect(x, y, w, h, 1 if c else 0)
+        self.fb.rect(x, y, w, h, c)
 
     def fill_rect(self, x, y, w, h, c):
-        self.fb.fill_rect(x, y, w, h, 1 if c else 0)
+        self.fb.fill_rect(x, y, w, h, c)
 
     def init(self):
         pass
@@ -206,8 +208,6 @@ class EPDWrapper:
         self.present()
 
     def display_Partial(self, _):
-        # Waveshare V3 partial refresh on Pico is often lower quality,
-        # so use the same full refresh path to keep text sharp.
         self.present()
 
 
@@ -241,13 +241,13 @@ H = 128
 
 
 # ============================================================
-# Zeichenhelfer
+# Zeichenhelfer (optimiert)
 # ============================================================
 
 def draw_gray_sep(epd, y, x0=0, w=296):
-    """2px dithered gray separator"""
+    """2px dithered gray separator (optimiert)"""
     for row in range(2):
-        offset = (y + row) % 2
+        offset = (y + row) & 1
         for x in range(offset + x0, x0 + w, 2):
             epd.pixel(x, y + row, 0)
 
@@ -256,8 +256,7 @@ def draw_progress_bar(epd, x, y, w, h, val, mx=5):
     epd.rect(x, y, w, h, 0)
     if val < 0:
         for i in range(0, w, 4):
-            epd.line(x + i, y,
-                     x + min(i + h, w - 1), y + h - 1, 0)
+            epd.line(x + i, y, x + min(i + h, w - 1), y + h - 1, 0)
         return
     fw = int((w - 4) * min(val, mx) / mx)
     if fw > 0:
@@ -412,7 +411,7 @@ def time_ago(ts):
 # ============================================================
 
 def draw_boot(epd, msg, step=0, total=4, sub=""):
-    epd.fill(0xff)
+    epd.fill(1)
     epd.fill_rect(0, 0, W, 16, 0)
     epd.text_big("ScanSync", 4, 4, 1, scale=1)
     epd.text("v1.0", W - 36, 4, 1)
@@ -421,15 +420,12 @@ def draw_boot(epd, msg, step=0, total=4, sub=""):
     if sub:
         sx = max(0, (W - len(sub) * 8) // 2)
         epd.text(sub, sx, 52, 0)
-    # 4 Kästchen mit genug Abstand fuer Labels
     pw = 12
     labels = ["Init", "WiFi", "Zeit", "Daten"]
-    # Breite pro Slot = max label breite (5ch*8=40) -> 42px
     slot_w = 42
     bx = (W - total * slot_w) // 2
     by = 76
     for i in range(total):
-        # Kästchen zentriert im Slot
         kx = bx + i * slot_w + (slot_w - pw) // 2
         if i < step:
             epd.fill_rect(kx, by, pw, pw, 0)
@@ -438,7 +434,6 @@ def draw_boot(epd, msg, step=0, total=4, sub=""):
             epd.fill_rect(kx + 3, by + 3, pw - 6, pw - 6, 0)
         else:
             epd.rect(kx, by, pw, pw, 0)
-        # Label zentriert unter Kästchen
         lw = len(labels[i]) * 8
         lx = bx + i * slot_w + (slot_w - lw) // 2
         epd.text(labels[i], max(0, lx), by + pw + 4, 0)
@@ -558,13 +553,14 @@ def draw_stacked_bar(epd, x, y, w, h, done, active, fail, total):
     # Done: solid black
     if d_w > 0:
         epd.fill_rect(ix, iy, d_w, ih, 0)
-    # Active: dithered (gray)
+    # Active: dithered (gray) - optimiert
     if a_w > 0:
+        ax = ix + d_w
         for row in range(ih):
-            off = row % 2
+            off = row & 1
             for px in range(off, a_w, 2):
-                epd.pixel(ix + d_w + px, iy + row, 0)
-    # Failed: vertical hatching
+                epd.pixel(ax + px, iy + row, 0)
+    # Failed: vertical hatching - optimiert
     if f_w > 0:
         fx = ix + d_w + a_w
         for col in range(0, f_w, 2):
@@ -580,7 +576,7 @@ def fmt_time_short(ts):
 
 
 def render_display(epd, data, wifi_ok, server_ok, rssi=0):
-    epd.fill(0xff)
+    epd.fill(1)
 
     # === HEADER y=0..13 ===
     epd.fill_rect(0, 0, W, 14, 0)
@@ -611,7 +607,6 @@ def render_display(epd, data, wifi_ok, server_ok, rssi=0):
     recent = data.get("recent_files", [])
 
     # === STATS LINE y=15..23 ===
-    # "10ok 3run 2err =15  O46s"
     draw_check(epd, 4, 15)
     epd.text(str(n_done), 16, 16, 0)
     gx = 16 + len(str(n_done)) * 8 + 6
@@ -632,7 +627,6 @@ def render_display(epd, data, wifi_ok, server_ok, rssi=0):
             avg_t = "{}s".format(avg_i)
         at = "O" + avg_t
         epd.text(at, W - len(at) * 8 - 4, 16, 0)
-        # draw a small circle for Ø
         epd.hline(W - len(at) * 8 - 4 + 1, 16, 5, 0)
         epd.hline(W - len(at) * 8 - 4 + 1, 23, 5, 0)
         epd.vline(W - len(at) * 8 - 4, 17, 6, 0)
@@ -641,14 +635,11 @@ def render_display(epd, data, wifi_ok, server_ok, rssi=0):
     # === STACKED BAR y=26..35 ===
     draw_stacked_bar(epd, 4, 26, W - 8, 10,
                      n_done, n_act, n_fail, n_total)
-    # Legend under bar: tiny markers
-    # no text labels needed, icons above are legend
 
     # === GRAY SEP y=38 ===
     draw_gray_sep(epd, 38)
 
     # === UNIFIED FILE LIST y=41..79 (4 rows à 10px) ===
-    # Merge active + recent, deduplicate by id, active first
     files = []
     seen_ids = set()
     for item in cur_proc:
@@ -677,7 +668,7 @@ def render_display(epd, data, wifi_ok, server_ok, rssi=0):
                 draw_gear(epd, 4, yy)
             else:
                 draw_doc_icon(epd, 4, yy)
-            # Status short tag (right-aligned)
+            # Status short tag
             stags = {
                 0: "NEW", 1: "META", 2: "OCR",
                 3: "NAME", 4: "SYNC", 5: "OK", -1: "ERR"
